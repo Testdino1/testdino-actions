@@ -1,0 +1,161 @@
+# Example workflow showing TestDino integration with Playwright tests
+# This demonstrates:
+# - Running sharded Playwright tests
+# - Merging shard reports
+# - Uploading to TestDino
+
+name: Playwright Tests with TestDino
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  run-tests:
+    name: Run shard ${{ matrix.shardIndex }}/5
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        shardIndex: [1, 2, 3, 4, 5] 
+        shardTotal: [5]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js 18.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Create .env file
+        run: |
+          echo "SAUCEDEMO_USERNAME=standard_user" >> .env
+          echo "SAUCEDEMO_PASSWORD=secret_sauce" >> .env
+     
+      - name: Cache npm dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Install Playwright browsers
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium firefox webkit
+
+      - name: List Playwright projects (debug)
+        run: npx playwright list --projects | cat
+
+      - name: Run shard ${{ matrix.shardIndex }} 
+        run: |
+          npx playwright test \
+            --grep="@chromium|@firefox|@webkit|@android|@ios" \
+            --reporter=blob \
+            --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
+
+      - name: Upload blob report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: blob-report-${{ matrix.shardIndex }}
+          path: ./blob-report
+          retention-days: 1
+
+  merge-reports:
+    name: Merge Reports & Upload to TestDino
+    needs: run-tests
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js 18.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Cache npm dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Install Playwright browsers
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps
+
+      - name: Download all blob reports
+        uses: actions/download-artifact@v4
+        with:
+          path: ./all-blob-reports
+          pattern: blob-report-*
+          merge-multiple: true
+
+      - name: Merge HTML & JSON reports
+        run: |
+          # Merge reports using config file (respects reporter settings from playwright.config.js)
+          npx playwright merge-reports --config=playwright.config.js ./all-blob-reports
+          
+          # Verify JSON report exists (config specifies results.json)
+          echo "📊 JSON report check:"
+          if [ -f "playwright-report/results.json" ]; then
+            echo "✅ Found playwright-report/results.json"
+            ls -lh playwright-report/results.json
+          else
+            echo "⚠️  results.json not found"
+            echo "📁 Contents of playwright-report:"
+            ls -la playwright-report/ || echo "Directory not found"
+          fi
+
+      - name: Upload combined report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Playwright Test Report
+          path: ./playwright-report
+          retention-days: 14
+
+      - name: TestDino Playwright Reporter
+        if: always()
+        id: testdino
+        uses: Testdino1/testdino-actions@v1.0.0
+        with:
+          token: ${{ secrets.TESTDINO_TOKEN }}
+          report-dir: './playwright-report'
+          upload-html: true
+          upload-traces: true
+          upload-videos: false
+          upload-images: false
+          verbose: true

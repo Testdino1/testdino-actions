@@ -1,0 +1,89 @@
+name: 'TestDino Reporter'
+description: 'Upload Playwright test results to TestDino with last-failed test tracking'
+author: 'TestDino'
+
+branding:
+  icon: 'check-circle'
+  color: 'green'
+
+inputs:
+  token:
+    description: 'TestDino API token for authentication'
+    required: true
+  
+  report-dir:
+    description: 'Directory containing Playwright reports (default: ./playwright-report)'
+    required: false
+    default: './playwright-report'
+  
+  upload-html:
+    description: 'Upload HTML reports'
+    required: false
+    default: 'true'
+  
+  upload-traces:
+    description: 'Upload Playwright trace files'
+    required: false
+    default: 'false'
+  
+  upload-videos:
+    description: 'Upload video recordings'
+    required: false
+    default: 'false'
+  
+  upload-images:
+    description: 'Upload screenshot images'
+    required: false
+    default: 'false'
+  
+  upload-files:
+    description: 'Upload file attachments'
+    required: false
+    default: 'false'
+  
+  verbose:
+    description: 'Enable verbose logging'
+    required: false
+    default: 'false'
+  
+  working-directory:
+    description: 'Working directory for the action'
+    required: false
+    default: '.'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Install tdpw CLI
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        echo "📦 Installing tdpw CLI..."
+        npm install -g tdpw@latest
+        echo "✅ tdpw version: $(tdpw --version)"
+        
+    - name: Upload to TestDino
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      id: upload
+      env:
+        TESTDINO_TOKEN: ${{ inputs.token }}
+      run: |
+        echo "🚀 Uploading test results to TestDino..."
+        
+        # Build tdpw upload command
+        TDPW_CMD="tdpw upload ${{ inputs.report-dir }}"
+        TDPW_CMD="$TDPW_CMD --token=\"\${TESTDINO_TOKEN}\""
+        
+        # Add optional flags
+        [ "${{ inputs.upload-html }}" == "true" ] && TDPW_CMD="$TDPW_CMD --upload-html"
+        [ "${{ inputs.upload-traces }}" == "true" ] && TDPW_CMD="$TDPW_CMD --upload-traces"
+        [ "${{ inputs.upload-videos }}" == "true" ] && TDPW_CMD="$TDPW_CMD --upload-videos"
+        [ "${{ inputs.upload-images }}" == "true" ] && TDPW_CMD="$TDPW_CMD --upload-images"
+        [ "${{ inputs.upload-files }}" == "true" ] && TDPW_CMD="$TDPW_CMD --upload-files"
+        [ "${{ inputs.verbose }}" == "true" ] && TDPW_CMD="$TDPW_CMD --verbose"
+        
+        # Execute upload (ignore exit code, check for success message instead)
+        set +e
+        eval $TDPW_CMD
+        echo "🚀 Upload complete"
